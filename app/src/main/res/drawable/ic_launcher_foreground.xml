@@ -1,0 +1,9 @@
+<?xml version="1.0" encoding="utf-8"?>
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="108dp" android:height="108dp"
+    android:viewportWidth="108" android:viewportHeight="108">
+    <!-- Sombrero de copa -->
+    <path android:fillColor="#FFF5F5F0" android:pathData="M42,36 L66,36 Q68,36 68,38 L68,64 L40,64 L40,38 Q40,36 42,36 Z" />
+    <path android:fillColor="#FFF2C230" android:pathData="M40,56 L68,56 L68,62 L40,62 Z" />
+    <path android:fillColor="#FFF5F5F0" android:pathData="M30,64 L78,64 Q81,64 81,67 Q81,70 78,70 L30,70 Q27,70 27,67 Q27,64 30,64 Z" />
+</vector>
