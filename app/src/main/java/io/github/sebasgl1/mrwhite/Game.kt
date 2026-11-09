@@ -81,12 +81,12 @@ class Game(context: Context) {
         val n = raw.trim().replace("\n", " ")
         if (n.isEmpty() || names.any { it.equals(n, ignoreCase = true) }) return false
         names.add(n)
-        fixCounts(); saveConfig()
+        applyRecommended()
         return true
     }
 
     fun removeName(n: String) {
-        names.remove(n); fixCounts(); saveConfig()
+        names.remove(n); applyRecommended()
     }
 
     fun moveName(from: Int, to: Int) {
@@ -96,6 +96,23 @@ class Game(context: Context) {
 
     fun setCounts(uc: Int, mw: Int) {
         undercover = uc.coerceAtLeast(0); white = mw.coerceAtLeast(0); saveConfig()
+    }
+
+    /** Cantidad sugerida (Undercover, Mr. White) según el número de jugadores. */
+    fun recommended(n: Int = names.size): Pair<Int, Int> {
+        if (n < 3) return 1 to 0
+        val total = Math.round(n * 0.4).toInt().coerceIn(1, maxImpostors(n))
+        val mw = when { n >= 12 -> 2; n >= 5 -> 1; else -> 0 }.coerceAtMost(total - 1).coerceAtLeast(0)
+        return (total - mw) to mw
+    }
+
+    val isRecommended get() = recommended() == (undercover to white)
+
+    /** Al cambiar los jugadores se ponen las cantidades sugeridas; luego se pueden ajustar a mano. */
+    fun applyRecommended() {
+        val (uc, mw) = recommended()
+        undercover = uc; white = mw
+        saveConfig()
     }
 
     private fun fixCounts() {

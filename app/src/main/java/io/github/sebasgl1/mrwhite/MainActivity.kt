@@ -294,6 +294,27 @@ fun SetupScreen(game: Game) {
                 ) { game.setCounts(game.undercover, game.white + it) }
                 Spacer(Modifier.height(8.dp))
                 Muted("👥 Civiles: ${maxOf(0, game.civilians)}", Modifier.padding(start = 4.dp))
+                if (game.names.size >= 3) {
+                    val (rUc, rMw) = game.recommended()
+                    Row(
+                        Modifier.fillMaxWidth().padding(top = 10.dp)
+                            .background(MaterialTheme.colorScheme.secondaryContainer, RoundedCornerShape(14.dp))
+                            .padding(start = 16.dp, end = 6.dp, top = 6.dp, bottom = 6.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                    ) {
+                        Column(Modifier.weight(1f).padding(vertical = 6.dp)) {
+                            Text("Recomendado para ${game.names.size} jugadores", fontSize = 13.sp, color = Gold)
+                            Text(
+                                "$rUc Undercover · $rMw Mr. White" + if (game.isRecommended) "  ✓" else "",
+                                fontSize = 16.sp, fontWeight = FontWeight.SemiBold,
+                                color = MaterialTheme.colorScheme.onSecondaryContainer,
+                            )
+                        }
+                        if (!game.isRecommended) {
+                            TextButton(onClick = { game.applyRecommended() }) { Text("Usar", color = Gold) }
+                        }
+                    }
+                }
 
                 SectionTitle("Palabras")
                 Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
