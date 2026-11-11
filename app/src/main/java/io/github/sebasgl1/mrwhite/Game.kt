@@ -8,6 +8,8 @@ import androidx.compose.runtime.mutableStateMapOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
 import org.json.JSONArray
+import org.json.JSONObject
+import java.security.SecureRandom
 import java.text.Normalizer
 
 enum class Role(val label: String) { CIVIL("Civil"), UNDERCOVER("Undercover"), MR_WHITE("Mr. White") }
@@ -43,6 +45,7 @@ val MODOS = listOf("Todo", "General", "Colombiano")
 class Game(context: Context) {
     private val prefs = context.getSharedPreferences("mrwhite", Context.MODE_PRIVATE)
     private val allWords: List<WordPair> = loadWords(context)
+    private val rng = SecureRandom()
 
     // Configuración (se guarda entre sesiones)
     val names = mutableStateListOf<String>().apply {
@@ -143,15 +146,14 @@ class Game(context: Context) {
         var fresh = pool.filter { it.id !in used }
         var newUsed = used
         if (fresh.isEmpty()) { fresh = pool; newUsed = used - pool.map { it.id }.toSet() }
-        val pair = fresh.random()
+        val pair = fresh[rng.nextInt(fresh.size)]
         prefs.edit().putStringSet("used", (newUsed + pair.id).map { it.toString() }.toSet()).apply()
 
         // Al azar cuál palabra es la de los civiles, para que no siempre sea la misma
-        if (Math.random() < 0.5) { civilWord = pair.a; undercoverWord = pair.b } else { civilWord = pair.b; undercoverWord = pair.a }
+        if (rng.nextBoolean()) { civilWord = pair.a; undercoverWord = pair.b } else { civilWord = pair.b; undercoverWord = pair.a }
         category = pair.categoria
 
-        val roles = (List(undercover) { Role.UNDERCOVER } + List(white) { Role.MR_WHITE } +
-            List(names.size - impostors) { Role.CIVIL }).shuffled()
+        val roles = fairRoles()
         players.clear()
         names.forEachIndexed { i, n ->
             val r = roles[i]
@@ -163,11 +165,58 @@ class Game(context: Context) {
         screen = Screen.Reveal(0, false)
     }
 
+    /**
+     * Reparto "justo": sigue siendo al azar, pero quien fue impostor hace poco tiene menos
+     * probabilidad de volver a serlo, y casi nunca tres veces seguidas.
+     */
+    private fun fairRoles(): List<Role> {
+        val hist = loadHistory()
+        val pool = names.indices.toMutableList()
+        val chosen = mutableListOf<Int>()
+        repeat(impostors) {
+            val w = pool.map { impostorWeight(hist[names[it]] ?: "") }
+            var r = rng.nextDouble() * w.sum()
+            var pick = pool.last()
+            for ((j, i) in pool.withIndex()) { r -= w[j]; if (r <= 0) { pick = i; break } }
+            chosen.add(pick); pool.remove(pick)
+        }
+        // Mr. White: preferir a quien no lo fue en la ronda anterior
+        val whites = chosen.sortedBy { (if ((hist[names[it]] ?: "").endsWith("W")) 1.0 else 0.0) + rng.nextDouble() * 0.9 }
+            .take(white).toSet()
+        val roles = names.indices.map { i ->
+            when { i in whites -> Role.MR_WHITE; i in chosen -> Role.UNDERCOVER; else -> Role.CIVIL }
+        }
+        names.forEachIndexed { i, n ->
+            val c = when (roles[i]) { Role.CIVIL -> 'C'; Role.UNDERCOVER -> 'U'; Role.MR_WHITE -> 'W' }
+            hist[n] = ((hist[n] ?: "") + c).takeLast(6)
+        }
+        saveHistory(hist)
+        return roles
+    }
+
+    private fun impostorWeight(h: String): Double {
+        val streak = h.reversed().takeWhile { it != 'C' }.length
+        val recent = h.takeLast(3).count { it != 'C' }
+        return when {
+            streak >= 2 -> 0.05           // ya fue impostor 2 rondas seguidas: casi imposible una 3.ª
+            else -> 1.0 / (1.0 + 1.5 * recent)
+        }
+    }
+
+    private fun loadHistory(): MutableMap<String, String> {
+        val o = runCatching { JSONObject(prefs.getString("history", "{}") ?: "{}") }.getOrElse { JSONObject() }
+        return o.keys().asSequence().associateWith { o.getString(it) }.toMutableMap()
+    }
+
+    private fun saveHistory(h: Map<String, String>) {
+        prefs.edit().putString("history", JSONObject(h).toString()).apply()
+    }
+
     /** Orden de pistas: empieza alguien al azar, pero nunca Mr. White. */
     private fun newOrder(): List<Int> {
         val alive = players.indices.filter { players[it].alive }
         val starters = alive.filter { players[it].role != Role.MR_WHITE }.ifEmpty { alive }
-        val first = starters.random()
+        val first = starters[rng.nextInt(starters.size)]
         val start = alive.indexOf(first)
         return alive.drop(start) + alive.take(start)
     }
