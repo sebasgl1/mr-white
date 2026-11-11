@@ -1,6 +1,14 @@
 package io.github.sebasgl1.mrwhite
 
+import android.app.Activity
+import android.content.Context
+import android.media.AudioManager
+import android.media.ToneGenerator
 import android.os.Bundle
+import android.os.Handler
+import android.os.Looper
+import android.os.VibrationEffect
+import android.os.Vibrator
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.BackHandler
 import androidx.activity.compose.setContent
@@ -12,6 +20,7 @@ import androidx.compose.animation.togetherWith
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -56,7 +65,12 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalView
+import androidx.core.view.WindowCompat
+import androidx.core.view.WindowInsetsCompat
+import androidx.core.view.WindowInsetsControllerCompat
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.input.KeyboardCapitalization
@@ -66,20 +80,58 @@ import androidx.compose.ui.unit.sp
 import kotlinx.coroutines.delay
 
 class MainActivity : ComponentActivity() {
+    private lateinit var game: Game
+
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         enableEdgeToEdge()
-        setContent { MrWhiteTheme { App() } }
+        game = Game(applicationContext)
+        setContent { MrWhiteTheme { App(game) } }
+    }
+
+    // Guarda la partida por si Android cierra la app en segundo plano
+    override fun onStop() {
+        super.onStop()
+        game.saveState()
+    }
+}
+
+/** Durante la partida: oculta los botones de Android y mantiene la pantalla encendida. */
+@Composable
+fun GameMode(active: Boolean) {
+    val view = LocalView.current
+    LaunchedEffect(active) {
+        val window = (view.context as? Activity)?.window ?: return@LaunchedEffect
+        val bars = WindowCompat.getInsetsController(window, view)
+        if (active) {
+            bars.systemBarsBehavior = WindowInsetsControllerCompat.BEHAVIOR_SHOW_TRANSIENT_BARS_BY_SWIPE
+            bars.hide(WindowInsetsCompat.Type.systemBars())
+        } else {
+            bars.show(WindowInsetsCompat.Type.systemBars())
+        }
+        view.keepScreenOn = active
+    }
+}
+
+/** Vibración y sonido cuando se acaba el tiempo. */
+fun buzz(ctx: Context) {
+    runCatching {
+        ctx.getSystemService(Vibrator::class.java)
+            ?.vibrate(VibrationEffect.createWaveform(longArrayOf(0, 300, 150, 300, 150, 500), -1))
+    }
+    runCatching {
+        val tone = ToneGenerator(AudioManager.STREAM_MUSIC, 90)
+        tone.startTone(ToneGenerator.TONE_CDMA_ALERT_CALL_GUARD, 900)
+        Handler(Looper.getMainLooper()).postDelayed({ tone.release() }, 1300)
     }
 }
 
 @Composable
-fun App() {
-    val ctx = LocalContext.current
-    val game = remember { Game(ctx.applicationContext) }
+fun App(game: Game) {
     var askQuit by remember { mutableStateOf(false) }
     val s = game.screen
     val inGame = s !is Screen.Home && s !is Screen.HowTo && s !is Screen.Setup && s !is Screen.Result
+    GameMode(active = s !is Screen.Home && s !is Screen.HowTo && s !is Screen.Setup)
 
     BackHandler(enabled = s !is Screen.Home) {
         when {
@@ -207,12 +259,12 @@ fun HowToScreen(game: Game) {
             "👥 Civiles" to "Todos reciben la misma palabra secreta.",
             "🕵️ Undercover" to "Recibe una palabra parecida, pero no sabe que es diferente. Si sospecha, le toca disimular.",
             "🎩 Mr. White" to "No recibe palabra. Escucha las pistas e improvisa sin que lo descubran.",
-            "1. Repartir" to "Pasen el celular: cada quien ve su palabra en secreto.",
+            "1. Repartir" to "Pasen el celular: cada quien mantiene presionado para ver su palabra en secreto.",
             "2. Pistas" to "En el orden que muestra la app, cada uno dice UNA palabra relacionada con la suya. Ni muy obvia ni muy rara.",
             "3. Votar" to "Discutan y voten a quién eliminar. La app revela qué era.",
             "4. Última chance" to "Si eliminan a Mr. White, puede ganar adivinando la palabra de los civiles.",
             "🏆 Ganan" to "Los civiles, si eliminan a todos los impostores. Los impostores, si llegan a quedar con solo un civil vivo.",
-            "⭐ Puntos" to "Civiles que ganan: +2. Undercover vivo al ganar: +10. Mr. White vivo al ganar o si adivina: +6.",
+            "⭐ Puntos" to "Civiles que ganan: +2. Undercover vivo al ganar: +10. Mr. White vivo al ganar o si adivina: +6 (y +2 para los Undercover que sigan vivos).",
         )
         rules.forEach { (t, d) ->
             Card(
@@ -380,38 +432,52 @@ fun RoundBtn(t: String, enabled: Boolean, onClick: () -> Unit) {
 @Composable
 fun RevealScreen(game: Game, s: Screen.Reveal) {
     val p = game.players[s.index]
+    var pressed by remember { mutableStateOf(false) }
+    var seen by remember { mutableStateOf(false) }
     Page(scroll = false, bottom = {
-        if (!s.shown) BigButton("Ver mi palabra") { game.screen = s.copy(shown = true) }
-        else BigButton("Listo, ocultar y pasar") { game.nextReveal(s.index) }
+        BigButton(if (s.index + 1 < game.players.size) "Listo, pasar al siguiente" else "Listo, empezar", enabled = seen && !pressed) { game.nextReveal(s.index) }
     }) {
         Muted("${s.index + 1} de ${game.players.size}")
-        Column(Modifier.fillMaxSize(), verticalArrangement = Arrangement.Center, horizontalAlignment = Alignment.CenterHorizontally) {
-            if (!s.shown) {
-                Text("📱", fontSize = 64.sp)
-                Spacer(Modifier.height(16.dp))
-                Muted("Pásale el celular a", align = TextAlign.Center)
-                Spacer(Modifier.height(6.dp))
-                Text(p.name, fontSize = 40.sp, fontWeight = FontWeight.Black, textAlign = TextAlign.Center)
-                Spacer(Modifier.height(18.dp))
-                Muted("Que nadie más mire la pantalla 👀", align = TextAlign.Center)
-            } else if (p.role == Role.MR_WHITE) {
-                Text("🎩", fontSize = 72.sp)
-                Spacer(Modifier.height(12.dp))
-                Text("Eres Mr. White", fontSize = 36.sp, fontWeight = FontWeight.Black, color = WhiteColor, textAlign = TextAlign.Center)
-                Spacer(Modifier.height(12.dp))
-                Muted("No tienes palabra. Escucha las pistas de los demás y disimula.", align = TextAlign.Center)
-            } else {
-                Muted("${p.name}, tu palabra es", align = TextAlign.Center)
-                Spacer(Modifier.height(14.dp))
-                Box(
-                    Modifier.fillMaxWidth().background(MaterialTheme.colorScheme.surface, RoundedCornerShape(24.dp))
-                        .padding(vertical = 36.dp, horizontal = 16.dp),
-                    contentAlignment = Alignment.Center,
-                ) {
+        Spacer(Modifier.height(18.dp))
+        Column(Modifier.fillMaxWidth(), horizontalAlignment = Alignment.CenterHorizontally) {
+            Muted("Pásale el celular a", align = TextAlign.Center)
+            Spacer(Modifier.height(4.dp))
+            Text(p.name, fontSize = 38.sp, fontWeight = FontWeight.Black, textAlign = TextAlign.Center)
+        }
+        Spacer(Modifier.height(22.dp))
+        // La palabra solo se ve mientras se mantiene presionado
+        Box(
+            Modifier.fillMaxWidth().weight(1f)
+                .background(MaterialTheme.colorScheme.surface, RoundedCornerShape(28.dp))
+                .pointerInput(s.index) {
+                    detectTapGestures(onPress = {
+                        pressed = true
+                        seen = true
+                        tryAwaitRelease()
+                        pressed = false
+                    })
+                }
+                .padding(20.dp),
+            contentAlignment = Alignment.Center,
+        ) {
+            Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                if (!pressed) {
+                    Text("👆", fontSize = 56.sp)
+                    Spacer(Modifier.height(12.dp))
+                    Text(if (seen) "Mantén presionado para verla otra vez" else "Mantén presionado para ver tu palabra", fontSize = 19.sp, fontWeight = FontWeight.SemiBold, textAlign = TextAlign.Center)
+                    Spacer(Modifier.height(8.dp))
+                    Muted("Se oculta al soltar. Que nadie más mire 👀", align = TextAlign.Center)
+                } else if (p.role == Role.MR_WHITE) {
+                    Text("🎩", fontSize = 64.sp)
+                    Spacer(Modifier.height(8.dp))
+                    Text("Eres Mr. White", fontSize = 34.sp, fontWeight = FontWeight.Black, color = WhiteColor, textAlign = TextAlign.Center)
+                    Spacer(Modifier.height(8.dp))
+                    Muted("No tienes palabra. Escucha las pistas y disimula.", align = TextAlign.Center)
+                } else {
+                    Muted("Tu palabra es", align = TextAlign.Center)
+                    Spacer(Modifier.height(10.dp))
                     Text(p.word ?: "", fontSize = 40.sp, fontWeight = FontWeight.Black, textAlign = TextAlign.Center, color = Gold)
                 }
-                Spacer(Modifier.height(14.dp))
-                Muted("Memorízala y no se la muestres a nadie", align = TextAlign.Center)
             }
         }
     }
@@ -454,8 +520,10 @@ fun DiscussScreen(game: Game) {
 fun DiscussionTimer() {
     var left by remember { mutableIntStateOf(0) }
     var running by remember { mutableStateOf(false) }
+    val ctx = LocalContext.current
     LaunchedEffect(running) {
         while (running && left > 0) { delay(1000); left-- }
+        if (running && left == 0) buzz(ctx)
         running = false
     }
     Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
@@ -547,20 +615,24 @@ fun WhiteGuessScreen(game: Game, index: Int) {
                 keyboardActions = KeyboardActions(onDone = { if (guess.isNotBlank()) game.whiteGuess(index, guess) }),
             )
             Spacer(Modifier.height(8.dp))
-            Muted("No importan tildes ni mayúsculas.", align = TextAlign.Center)
+            Muted("No importan tildes, mayúsculas ni plurales.", align = TextAlign.Center)
         }
     }
 }
 
 @Composable
 fun GuessFailedScreen(game: Game, s: Screen.GuessFailed) {
-    Page(scroll = false, bottom = { BigButton("Continuar") { game.continueAfterElimination() } }) {
+    Page(scroll = false, bottom = {
+        BigButton("No era, continuar") { game.continueAfterElimination() }
+        Spacer(Modifier.height(10.dp))
+        GhostButton("El grupo la da por buena") { game.acceptGuess(s.index) }
+    }) {
         Column(Modifier.fillMaxSize(), verticalArrangement = Arrangement.Center, horizontalAlignment = Alignment.CenterHorizontally) {
             Text("❌", fontSize = 64.sp)
             Spacer(Modifier.height(12.dp))
             Text("No era \"${s.guess}\"", fontSize = 28.sp, fontWeight = FontWeight.Bold, textAlign = TextAlign.Center)
             Spacer(Modifier.height(8.dp))
-            Muted("${game.players[s.index].name} queda eliminado. El juego sigue.", align = TextAlign.Center)
+            Muted("${game.players[s.index].name} queda eliminado y el juego sigue. Si era la misma palabra dicha de otra forma, el grupo puede darla por buena.", align = TextAlign.Center)
         }
     }
 }

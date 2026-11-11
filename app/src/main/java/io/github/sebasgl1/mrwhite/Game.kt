@@ -10,11 +10,6 @@ import androidx.compose.runtime.setValue
 import org.json.JSONArray
 import org.json.JSONObject
 import java.security.SecureRandom
-import java.text.Normalizer
-
-enum class Role(val label: String) { CIVIL("Civil"), UNDERCOVER("Undercover"), MR_WHITE("Mr. White") }
-
-enum class Winner { CIVILES, IMPOSTORES, MR_WHITE }
 
 data class WordPair(
     val id: Int,
@@ -31,7 +26,7 @@ sealed class Screen {
     data object Home : Screen()
     data object HowTo : Screen()
     data object Setup : Screen()
-    data class Reveal(val index: Int, val shown: Boolean) : Screen()
+    data class Reveal(val index: Int) : Screen()
     data object Discuss : Screen()
     data object Vote : Screen()
     data class Eliminated(val index: Int) : Screen()
@@ -66,10 +61,15 @@ class Game(context: Context) {
     var undercoverWord by mutableStateOf("")
     var category by mutableStateOf("")
 
+    init {
+        loadScores()
+        restoreState()
+    }
+
     val impostors get() = undercover + white
     val civilians get() = names.size - impostors
 
-    fun maxImpostors(n: Int = names.size) = maxOf(1, (n - 1) / 2)
+    fun maxImpostors() = Rules.maxImpostors(names.size)
 
     /** Mensaje de error de la configuración, o null si se puede jugar. */
     fun setupError(): String? = when {
@@ -101,13 +101,7 @@ class Game(context: Context) {
         undercover = uc.coerceAtLeast(0); white = mw.coerceAtLeast(0); saveConfig()
     }
 
-    /** Cantidad sugerida (Undercover, Mr. White) según el número de jugadores. */
-    fun recommended(n: Int = names.size): Pair<Int, Int> {
-        if (n < 3) return 1 to 0
-        val total = Math.round(n * 0.4).toInt().coerceIn(1, maxImpostors(n))
-        val mw = when { n >= 12 -> 2; n >= 5 -> 1; else -> 0 }.coerceAtMost(total - 1).coerceAtLeast(0)
-        return (total - mw) to mw
-    }
+    fun recommended(): Pair<Int, Int> = Rules.recommended(names.size)
 
     val isRecommended get() = recommended() == (undercover to white)
 
@@ -116,14 +110,6 @@ class Game(context: Context) {
         val (uc, mw) = recommended()
         undercover = uc; white = mw
         saveConfig()
-    }
-
-    private fun fixCounts() {
-        val max = maxImpostors()
-        while (impostors > max && (undercover > 0 || white > 0)) {
-            if (white > 0 && white >= undercover) white-- else undercover--
-        }
-        if (impostors == 0 && names.size >= 3) undercover = 1
     }
 
     fun saveConfig() {
@@ -137,6 +123,8 @@ class Game(context: Context) {
     private fun poolFor(): List<WordPair> = allWords.filter {
         (modo == "Todo" || it.modo == modo) && (picante || !it.picante)
     }
+
+    // ---------- Partida ----------
 
     fun start() {
         if (setupError() != null) return
@@ -153,76 +141,26 @@ class Game(context: Context) {
         if (rng.nextBoolean()) { civilWord = pair.a; undercoverWord = pair.b } else { civilWord = pair.b; undercoverWord = pair.a }
         category = pair.categoria
 
-        val roles = fairRoles()
+        val list = names.toList()
+        val hist = loadHistory()
+        val roles = Rules.assignRoles(list, undercover, white, hist, rng)
+        saveHistory(Rules.pushHistory(hist, list, roles))
+
         players.clear()
-        names.forEachIndexed { i, n ->
+        list.forEachIndexed { i, n ->
             val r = roles[i]
             players.add(Player(n, r, when (r) { Role.CIVIL -> civilWord; Role.UNDERCOVER -> undercoverWord; Role.MR_WHITE -> null }))
         }
-        names.forEach { if (it !in scores) scores[it] = 0 }
+        list.forEach { if (it !in scores) scores[it] = 0 }
         round = 1
         order = newOrder()
-        screen = Screen.Reveal(0, false)
+        screen = Screen.Reveal(0)
     }
 
-    /**
-     * Reparto "justo": sigue siendo al azar, pero quien fue impostor hace poco tiene menos
-     * probabilidad de volver a serlo, y casi nunca tres veces seguidas.
-     */
-    private fun fairRoles(): List<Role> {
-        val hist = loadHistory()
-        val pool = names.indices.toMutableList()
-        val chosen = mutableListOf<Int>()
-        repeat(impostors) {
-            val w = pool.map { impostorWeight(hist[names[it]] ?: "") }
-            var r = rng.nextDouble() * w.sum()
-            var pick = pool.last()
-            for ((j, i) in pool.withIndex()) { r -= w[j]; if (r <= 0) { pick = i; break } }
-            chosen.add(pick); pool.remove(pick)
-        }
-        // Mr. White: preferir a quien no lo fue en la ronda anterior
-        val whites = chosen.sortedBy { (if ((hist[names[it]] ?: "").endsWith("W")) 1.0 else 0.0) + rng.nextDouble() * 0.9 }
-            .take(white).toSet()
-        val roles = names.indices.map { i ->
-            when { i in whites -> Role.MR_WHITE; i in chosen -> Role.UNDERCOVER; else -> Role.CIVIL }
-        }
-        names.forEachIndexed { i, n ->
-            val c = when (roles[i]) { Role.CIVIL -> 'C'; Role.UNDERCOVER -> 'U'; Role.MR_WHITE -> 'W' }
-            hist[n] = ((hist[n] ?: "") + c).takeLast(6)
-        }
-        saveHistory(hist)
-        return roles
-    }
-
-    private fun impostorWeight(h: String): Double {
-        val streak = h.reversed().takeWhile { it != 'C' }.length
-        val recent = h.takeLast(3).count { it != 'C' }
-        return when {
-            streak >= 2 -> 0.05           // ya fue impostor 2 rondas seguidas: casi imposible una 3.ª
-            else -> 1.0 / (1.0 + 1.5 * recent)
-        }
-    }
-
-    private fun loadHistory(): MutableMap<String, String> {
-        val o = runCatching { JSONObject(prefs.getString("history", "{}") ?: "{}") }.getOrElse { JSONObject() }
-        return o.keys().asSequence().associateWith { o.getString(it) }.toMutableMap()
-    }
-
-    private fun saveHistory(h: Map<String, String>) {
-        prefs.edit().putString("history", JSONObject(h).toString()).apply()
-    }
-
-    /** Orden de pistas: empieza alguien al azar, pero nunca Mr. White. */
-    private fun newOrder(): List<Int> {
-        val alive = players.indices.filter { players[it].alive }
-        val starters = alive.filter { players[it].role != Role.MR_WHITE }.ifEmpty { alive }
-        val first = starters[rng.nextInt(starters.size)]
-        val start = alive.indexOf(first)
-        return alive.drop(start) + alive.take(start)
-    }
+    private fun newOrder() = Rules.clueOrder(players.map { it.role }, players.map { it.alive }, rng)
 
     fun nextReveal(index: Int) {
-        screen = if (index + 1 < players.size) Screen.Reveal(index + 1, false) else Screen.Discuss
+        screen = if (index + 1 < players.size) Screen.Reveal(index + 1) else Screen.Discuss
     }
 
     fun eliminate(index: Int) {
@@ -231,50 +169,133 @@ class Game(context: Context) {
     }
 
     fun whiteGuess(index: Int, guess: String) {
-        if (normalize(guess).isNotEmpty() && normalize(guess) == normalize(civilWord)) finish(Winner.MR_WHITE, index)
+        if (Rules.sameWord(guess, civilWord)) finish(Winner.MR_WHITE, index)
         else screen = Screen.GuessFailed(index, guess.trim())
     }
 
+    /** El grupo decide que la adivinanza de Mr. White sí era correcta. */
+    fun acceptGuess(index: Int) = finish(Winner.MR_WHITE, index)
+
     fun continueAfterElimination() {
-        val alive = players.filter { it.alive }
-        val impostorsAlive = alive.count { it.role != Role.CIVIL }
-        val civAlive = alive.size - impostorsAlive
-        when {
-            impostorsAlive == 0 -> finish(Winner.CIVILES)
-            civAlive <= 1 -> finish(Winner.IMPOSTORES)
-            else -> { round++; order = newOrder(); screen = Screen.Discuss }
-        }
+        val w = Rules.winner(players.map { it.role }, players.map { it.alive })
+        if (w != null) finish(w)
+        else { round++; order = newOrder(); screen = Screen.Discuss }
     }
 
     private fun finish(w: Winner, whiteIndex: Int = -1) {
+        val pts = Rules.points(w, players.map { it.role }, players.map { it.alive }, whiteIndex)
         val gained = mutableMapOf<String, Int>()
         players.forEachIndexed { i, p ->
-            val pts = when (w) {
-                Winner.CIVILES -> if (p.role == Role.CIVIL) 2 else 0
-                Winner.IMPOSTORES -> when {
-                    !p.alive -> 0
-                    p.role == Role.UNDERCOVER -> 10
-                    p.role == Role.MR_WHITE -> 6
-                    else -> 0
-                }
-                Winner.MR_WHITE -> if (i == whiteIndex) 6 else 0
-            }
-            gained[p.name] = pts
-            scores[p.name] = (scores[p.name] ?: 0) + pts
+            gained[p.name] = pts[i]
+            scores[p.name] = (scores[p.name] ?: 0) + pts[i]
         }
+        saveScores()
         screen = Screen.Result(w, gained)
     }
 
-    fun resetScores() { scores.keys.toList().forEach { scores[it] = 0 } }
+    fun resetScores() {
+        scores.keys.toList().forEach { scores[it] = 0 }
+        saveScores()
+    }
+
+    // ---------- Guardado ----------
+
+    private fun saveScores() {
+        val o = JSONObject()
+        scores.forEach { (k, v) -> o.put(k, v) }
+        prefs.edit().putString("scores", o.toString()).apply()
+    }
+
+    private fun loadScores() {
+        runCatching {
+            val o = JSONObject(prefs.getString("scores", "{}") ?: "{}")
+            for (k in o.keys()) scores[k] = o.getInt(k)
+        }
+    }
+
+    private fun loadHistory(): Map<String, String> = runCatching {
+        val o = JSONObject(prefs.getString("history", "{}") ?: "{}")
+        o.keys().asSequence().associateWith { o.getString(it) }
+    }.getOrElse { emptyMap() }
+
+    private fun saveHistory(h: Map<String, String>) {
+        prefs.edit().putString("history", JSONObject(h).toString()).apply()
+    }
+
+    /** Guarda la partida en curso para retomarla si Android cierra la app. */
+    fun saveState() {
+        val s = screen
+        if (s is Screen.Home || s is Screen.HowTo || s is Screen.Setup || players.isEmpty()) {
+            prefs.edit().remove("state").apply()
+            return
+        }
+        val o = JSONObject()
+        val ps = JSONArray()
+        players.forEach { p ->
+            ps.put(JSONObject().put("n", p.name).put("r", p.role.name).put("w", p.word ?: "").put("a", p.alive))
+        }
+        val ord = JSONArray()
+        order.forEach { ord.put(it) }
+        o.put("players", ps).put("order", ord)
+        o.put("round", round).put("civil", civilWord).put("under", undercoverWord).put("cat", category)
+        when (s) {
+            is Screen.Reveal -> o.put("screen", "reveal").put("index", s.index)
+            is Screen.Discuss -> o.put("screen", "discuss")
+            is Screen.Vote -> o.put("screen", "vote")
+            is Screen.Eliminated -> o.put("screen", "eliminated").put("index", s.index)
+            is Screen.WhiteGuess -> o.put("screen", "whiteguess").put("index", s.index)
+            is Screen.GuessFailed -> o.put("screen", "guessfailed").put("index", s.index).put("guess", s.guess)
+            is Screen.Result -> {
+                val g = JSONObject()
+                s.gained.forEach { (k, v) -> g.put(k, v) }
+                o.put("screen", "result").put("winner", s.winner.name).put("gained", g)
+            }
+            else -> {}
+        }
+        prefs.edit().putString("state", o.toString()).apply()
+    }
+
+    private fun restoreState() {
+        val raw = prefs.getString("state", null) ?: return
+        try {
+            val o = JSONObject(raw)
+            val ps = o.getJSONArray("players")
+            val list = (0 until ps.length()).map { i ->
+                val p = ps.getJSONObject(i)
+                val role = Role.valueOf(p.getString("r"))
+                Player(p.getString("n"), role, if (role == Role.MR_WHITE) null else p.getString("w"), p.getBoolean("a"))
+            }
+            if (list.isEmpty()) return
+            val ord = o.getJSONArray("order")
+            val index = o.optInt("index", 0).coerceIn(0, list.size - 1)
+            val scr: Screen? = when (o.getString("screen")) {
+                "reveal" -> Screen.Reveal(index)
+                "discuss" -> Screen.Discuss
+                "vote" -> Screen.Vote
+                "eliminated" -> Screen.Eliminated(index)
+                "whiteguess" -> Screen.WhiteGuess(index)
+                "guessfailed" -> Screen.GuessFailed(index, o.optString("guess"))
+                "result" -> {
+                    val g = o.getJSONObject("gained")
+                    Screen.Result(Winner.valueOf(o.getString("winner")), g.keys().asSequence().associateWith { g.getInt(it) })
+                }
+                else -> null
+            }
+            if (scr == null) return
+            players.clear()
+            players.addAll(list)
+            order = (0 until ord.length()).map { ord.getInt(it) }.filter { it in list.indices }
+            round = o.getInt("round")
+            civilWord = o.getString("civil")
+            undercoverWord = o.getString("under")
+            category = o.getString("cat")
+            screen = scr
+        } catch (e: Exception) {
+            prefs.edit().remove("state").apply()
+        }
+    }
 
     companion object {
-        fun normalize(s: String): String =
-            Normalizer.normalize(s.trim().lowercase(), Normalizer.Form.NFD)
-                .replace(Regex("\\p{Mn}+"), "")
-                .replace(Regex("[^a-z0-9ñ ]"), "")
-                .replace(Regex("\\s+"), " ")
-                .trim()
-
         private fun loadWords(context: Context): List<WordPair> {
             val text = context.assets.open("palabras.json").bufferedReader(Charsets.UTF_8).use { it.readText() }
             val arr = JSONArray(text)
