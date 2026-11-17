@@ -2,6 +2,7 @@ package io.github.sebasgl1.mrwhite
 
 import android.content.Context
 import androidx.compose.ui.test.SemanticsNodeInteractionsProvider
+import androidx.compose.ui.test.assertIsOn
 import androidx.compose.ui.test.hasSetTextAction
 import androidx.compose.ui.test.hasTestTag
 import androidx.compose.ui.test.hasText
@@ -113,7 +114,9 @@ class FlowTest {
             rule.onNodeWithText("Jugar").performClick()
             rule.onNodeWithTag("setup-list").performScrollToNode(hasTestTag("big-text"))
             rule.onNodeWithTag("big-text").performClick()
-            rule.onNodeWithText("Nueva partida").assertExists()
+            rule.onNodeWithTag("big-text").assertIsOn()
+            // Con letra grande se puede seguir jugando
+            rule.onNodeWithText("Repartir palabras").assertExists()
         }
     }
 }
