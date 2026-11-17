@@ -86,6 +86,9 @@ class RulesTest {
         assertEquals(listOf(0, 0, 10, 6), Rules.points(Winner.IMPOSTORES, roles, listOf(true, false, true, true)))
         assertEquals(listOf(0, 0, 2, 6), Rules.points(Winner.MR_WHITE, roles, listOf(true, true, true, false), 3))
         assertEquals(listOf(0, 0, 0, 6), Rules.points(Winner.MR_WHITE, roles, listOf(true, true, false, false), 3))
+        // Con dos Mr. White, el que sigue vivo también gana +2
+        val dos = listOf(Role.CIVIL, Role.CIVIL, Role.CIVIL, Role.MR_WHITE, Role.MR_WHITE)
+        assertEquals(listOf(0, 0, 0, 6, 2), Rules.points(Winner.MR_WHITE, dos, listOf(true, true, true, false, true), 3))
     }
 
     @Test fun adivinanzaFlexible() {
@@ -95,6 +98,12 @@ class RulesTest {
         assertTrue(Rules.sameWord("flor", "Flores"))
         assertTrue(Rules.sameWord("vaca", "Vaca (recolecta)"))
         assertTrue(Rules.sameWord("Año nuevo", "Año Nuevo"))
+        assertTrue(Rules.sameWord("café", "Cafés"))
+        assertTrue(Rules.sameWord("luz", "Luces"))
+        assertTrue(Rules.sameWord("tren", "Trenes"))
+        assertTrue(Rules.sameWord("pie", "Pies"))
+        assertFalse(Rules.sameWord("pan", "Pana"))
+        assertFalse(Rules.sameWord("papas", "Papas fritas"))
         assertFalse(Rules.sameWord("piscina", "Playa"))
         assertFalse(Rules.sameWord("", "Playa"))
         assertFalse(Rules.sameWord("  ", "Playa"))

@@ -25,6 +25,8 @@ class WordsTest {
             assertTrue("par $i con palabras iguales", !Rules.sameWord(a, b))
             all.add(a.lowercase()); all.add(b.lowercase())
         }
+        val ids = (0 until words.length()).map { words.getJSONObject(it).let { o -> Rules.pairId(o.getString("civil"), o.getString("undercover")) } }
+        assertEquals("ids repetidos", ids.size, ids.toSet().size)
         val dup = all.groupingBy { it }.eachCount().filter { it.value > 1 }.keys
         assertEquals("palabras repetidas: $dup", 0, dup.size)
     }

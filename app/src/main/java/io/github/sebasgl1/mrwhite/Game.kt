@@ -12,7 +12,7 @@ import org.json.JSONObject
 import java.security.SecureRandom
 
 data class WordPair(
-    val id: Int,
+    val id: String,
     val modo: String,
     val categoria: String,
     val a: String,
@@ -60,6 +60,8 @@ class Game(context: Context) {
     var civilWord by mutableStateOf("")
     var undercoverWord by mutableStateOf("")
     var category by mutableStateOf("")
+    /** Hora (ms) en que se acaba el temporizador de discusión; 0 = apagado. Vive aquí para no reiniciarse al ir a votar. */
+    var timerEnd by mutableStateOf(0L)
 
     init {
         loadScores()
@@ -126,16 +128,23 @@ class Game(context: Context) {
 
     // ---------- Partida ----------
 
+    /** "Otra ronda": si la configuración ya no sirve, lleva a la pantalla de jugadores en vez de no hacer nada. */
+    fun startOrSetup() {
+        if (setupError() != null) screen = Screen.Setup else start()
+    }
+
     fun start() {
         if (setupError() != null) return
+        timerEnd = 0L
         saveConfig()
         val pool = poolFor()
-        val used = (prefs.getStringSet("used", emptySet()) ?: emptySet()).mapNotNull { it.toIntOrNull() }.toSet()
+        // "used2": ids estables por texto (los de antes eran por posición en la librería)
+        val used = prefs.getStringSet("used2", emptySet()) ?: emptySet()
         var fresh = pool.filter { it.id !in used }
         var newUsed = used
         if (fresh.isEmpty()) { fresh = pool; newUsed = used - pool.map { it.id }.toSet() }
         val pair = fresh[rng.nextInt(fresh.size)]
-        prefs.edit().putStringSet("used", (newUsed + pair.id).map { it.toString() }.toSet()).apply()
+        prefs.edit().putStringSet("used2", newUsed + pair.id).remove("used").apply()
 
         // Al azar cuál palabra es la de los civiles, para que no siempre sea la misma
         if (rng.nextBoolean()) { civilWord = pair.a; undercoverWord = pair.b } else { civilWord = pair.b; undercoverWord = pair.a }
@@ -179,7 +188,7 @@ class Game(context: Context) {
     fun continueAfterElimination() {
         val w = Rules.winner(players.map { it.role }, players.map { it.alive })
         if (w != null) finish(w)
-        else { round++; order = newOrder(); screen = Screen.Discuss }
+        else { round++; order = newOrder(); timerEnd = 0L; screen = Screen.Discuss }
     }
 
     private fun finish(w: Winner, whiteIndex: Int = -1) {
@@ -230,6 +239,7 @@ class Game(context: Context) {
             return
         }
         val o = JSONObject()
+        o.put("t", System.currentTimeMillis())
         val ps = JSONArray()
         players.forEach { p ->
             ps.put(JSONObject().put("n", p.name).put("r", p.role.name).put("w", p.word ?: "").put("a", p.alive))
@@ -259,6 +269,11 @@ class Game(context: Context) {
         val raw = prefs.getString("state", null) ?: return
         try {
             val o = JSONObject(raw)
+            // Una partida abandonada hace más de 6 horas no se retoma
+            if (System.currentTimeMillis() - o.optLong("t", 0L) > RESUME_MS) {
+                prefs.edit().remove("state").apply()
+                return
+            }
             val ps = o.getJSONArray("players")
             val list = (0 until ps.length()).map { i ->
                 val p = ps.getJSONObject(i)
@@ -296,13 +311,15 @@ class Game(context: Context) {
     }
 
     companion object {
+        const val RESUME_MS = 6 * 60 * 60 * 1000L
+
         private fun loadWords(context: Context): List<WordPair> {
             val text = context.assets.open("palabras.json").bufferedReader(Charsets.UTF_8).use { it.readText() }
             val arr = JSONArray(text)
             return (0 until arr.length()).map { i ->
                 val o = arr.getJSONObject(i)
                 WordPair(
-                    id = i,
+                    id = Rules.pairId(o.getString("civil"), o.getString("undercover")),
                     modo = o.getString("modo"),
                     categoria = o.getString("categoria"),
                     a = o.getString("civil"),

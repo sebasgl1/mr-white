@@ -264,7 +264,7 @@ fun HowToScreen(game: Game) {
             "3. Votar" to "Discutan y voten a quién eliminar. La app revela qué era.",
             "4. Última chance" to "Si eliminan a Mr. White, puede ganar adivinando la palabra de los civiles.",
             "🏆 Ganan" to "Los civiles, si eliminan a todos los impostores. Los impostores, si llegan a quedar con solo un civil vivo.",
-            "⭐ Puntos" to "Civiles que ganan: +2. Undercover vivo al ganar: +10. Mr. White vivo al ganar o si adivina: +6 (y +2 para los Undercover que sigan vivos).",
+            "⭐ Puntos" to "Civiles que ganan: +2. Undercover vivo al ganar: +10. Mr. White vivo al ganar o si adivina: +6 (y +2 para los demás impostores que sigan vivos).",
         )
         rules.forEach { (t, d) ->
             Card(
@@ -432,8 +432,8 @@ fun RoundBtn(t: String, enabled: Boolean, onClick: () -> Unit) {
 @Composable
 fun RevealScreen(game: Game, s: Screen.Reveal) {
     val p = game.players[s.index]
-    var pressed by remember { mutableStateOf(false) }
-    var seen by remember { mutableStateOf(false) }
+    var pressed by remember(s.index) { mutableStateOf(false) }
+    var seen by remember(s.index) { mutableStateOf(false) }
     Page(scroll = false, bottom = {
         BigButton(if (s.index + 1 < game.players.size) "Listo, pasar al siguiente" else "Listo, empezar", enabled = seen && !pressed) { game.nextReveal(s.index) }
     }) {
@@ -512,20 +512,28 @@ fun DiscussScreen(game: Game) {
             out.forEach { Muted("${it.name} · ${it.role.label}", Modifier.padding(vertical = 2.dp)) }
         }
         SectionTitle("Temporizador de discusión")
-        DiscussionTimer()
+        DiscussionTimer(game)
     }
 }
 
 @Composable
-fun DiscussionTimer() {
-    var left by remember { mutableIntStateOf(0) }
-    var running by remember { mutableStateOf(false) }
+fun DiscussionTimer(game: Game) {
     val ctx = LocalContext.current
-    LaunchedEffect(running) {
-        while (running && left > 0) { delay(1000); left-- }
-        if (running && left == 0) buzz(ctx)
-        running = false
+    var now by remember { mutableStateOf(System.currentTimeMillis()) }
+    val end = game.timerEnd
+    LaunchedEffect(end) {
+        while (end > 0) {
+            now = System.currentTimeMillis()
+            if (now >= end) {
+                game.timerEnd = 0L
+                buzz(ctx)
+                break
+            }
+            delay(250)
+        }
     }
+    val left = if (end > 0) ((end - now + 999) / 1000).toInt().coerceAtLeast(0) else 0
+    val running = end > 0
     Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
         Text(
             "%d:%02d".format(left / 60, left % 60), fontSize = 28.sp, fontWeight = FontWeight.Bold,
@@ -533,9 +541,9 @@ fun DiscussionTimer() {
             modifier = Modifier.width(86.dp),
         )
         listOf(60, 120, 180).forEach { secs ->
-            FilterChip(selected = false, onClick = { left = secs; running = true }, label = { Text("${secs / 60} min") })
+            FilterChip(selected = false, onClick = { game.timerEnd = System.currentTimeMillis() + secs * 1000L }, label = { Text("${secs / 60} min") })
         }
-        if (running) TextButton(onClick = { running = false; left = 0 }) { Text("Parar") }
+        if (running) TextButton(onClick = { game.timerEnd = 0L }) { Text("Parar") }
     }
 }
 
@@ -543,7 +551,7 @@ fun DiscussionTimer() {
 
 @Composable
 fun VoteScreen(game: Game) {
-    var pick by remember { mutableStateOf(-1) }
+    var pick by remember { mutableIntStateOf(-1) }
     Page(bottom = { GhostButton("Volver a las pistas") { game.screen = Screen.Discuss } }) {
         Text("¿A quién eliminan?", fontSize = 30.sp, fontWeight = FontWeight.Bold)
         Spacer(Modifier.height(4.dp))
@@ -647,7 +655,7 @@ fun ResultScreen(game: Game, s: Screen.Result) {
         Winner.MR_WHITE -> Triple("🎩", "¡Mr. White adivinó!", WhiteColor)
     }
     Page(bottom = {
-        BigButton("Otra ronda") { game.start() }
+        BigButton("Otra ronda") { game.startOrSetup() }
         Spacer(Modifier.height(10.dp))
         GhostButton("Cambiar jugadores") { game.screen = Screen.Setup }
     }) {

@@ -81,7 +81,7 @@ object Rules {
 
     /**
      * Puntos de la ronda. Civiles que ganan: +2. Impostores vivos al ganar: Undercover +10, Mr. White +6.
-     * Si Mr. White adivina: +6 para él y +2 para los Undercover que sigan vivos.
+     * Si Mr. White adivina: +6 para él y +2 para los demás impostores que sigan vivos.
      */
     fun points(w: Winner, roles: List<Role>, alive: List<Boolean>, whiteIndex: Int = -1): List<Int> =
         roles.indices.map { i ->
@@ -90,7 +90,7 @@ object Rules {
                 Winner.IMPOSTORES ->
                     if (!alive[i]) 0 else if (roles[i] == Role.UNDERCOVER) 10 else if (roles[i] == Role.MR_WHITE) 6 else 0
                 Winner.MR_WHITE ->
-                    if (i == whiteIndex) 6 else if (roles[i] == Role.UNDERCOVER && alive[i]) 2 else 0
+                    if (i == whiteIndex) 6 else if (roles[i] != Role.CIVIL && alive[i]) 2 else 0
             }
         }
 
@@ -103,15 +103,30 @@ object Rules {
 
     private val ARTICLES = setOf("el", "la", "los", "las", "un", "una", "unos", "unas")
 
-    private fun stem(t: String): String =
-        if (t.length > 4 && t.endsWith("es")) t.dropLast(2) else if (t.length > 3 && t.endsWith("s")) t.dropLast(1) else t
+    /** Formas posibles de una palabra sin plural: mesas→mesa, trenes→tren, cafés→café, luces→luz. */
+    private fun forms(t: String): Set<String> {
+        val out = mutableSetOf(t)
+        if (t.length > 3 && t.endsWith("s")) out.add(t.dropLast(1))
+        if (t.length > 4 && t.endsWith("es")) out.add(t.dropLast(2))
+        if (t.length > 4 && t.endsWith("ces")) out.add(t.dropLast(3) + "z")
+        return out
+    }
 
-    private fun key(s: String): String =
-        normalize(s).split(" ").filter { it.isNotEmpty() && it !in ARTICLES }.joinToString(" ") { stem(it) }
+    private fun tokens(s: String): List<String> =
+        normalize(s).split(" ").filter { it.isNotEmpty() && it !in ARTICLES }
 
     /** Compara la adivinanza con la palabra sin importar tildes, mayúsculas, artículos ni plurales. */
     fun sameWord(guess: String, word: String): Boolean {
-        val g = key(guess)
-        return g.isNotEmpty() && g == key(word)
+        val g = tokens(guess)
+        val w = tokens(word)
+        if (g.isEmpty() || g.size != w.size) return false
+        return g.indices.all { (forms(g[it]) intersect forms(w[it])).isNotEmpty() }
+    }
+
+    /** Identificador estable de un par: no cambia si se agregan o quitan otros pares de la librería. */
+    fun pairId(a: String, b: String): String {
+        val crc = java.util.zip.CRC32()
+        crc.update("$a|$b".toByteArray(Charsets.UTF_8))
+        return "p" + java.lang.Long.toHexString(crc.value)
     }
 }
