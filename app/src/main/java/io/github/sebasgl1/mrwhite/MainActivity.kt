@@ -32,7 +32,19 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
-import androidx.compose.foundation.layout.safeDrawingPadding
+import androidx.compose.foundation.layout.ExperimentalLayoutApi
+import androidx.compose.foundation.layout.FlowRow
+import androidx.compose.foundation.layout.WindowInsets
+import androidx.compose.foundation.layout.displayCutout
+import androidx.compose.foundation.layout.ime
+import androidx.compose.foundation.layout.systemBarsIgnoringVisibility
+import androidx.compose.foundation.layout.union
+import androidx.compose.foundation.layout.windowInsetsPadding
+import androidx.compose.runtime.CompositionLocalProvider
+import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.platform.testTag
+import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.unit.Density
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
@@ -126,6 +138,12 @@ fun buzz(ctx: Context) {
     }
 }
 
+@OptIn(ExperimentalLayoutApi::class)
+val StableInsets: WindowInsets
+    @Composable get() = WindowInsets.systemBarsIgnoringVisibility
+        .union(WindowInsets.displayCutout)
+        .union(WindowInsets.ime)
+
 @Composable
 fun App(game: Game) {
     var askQuit by remember { mutableStateOf(false) }
@@ -141,7 +159,11 @@ fun App(game: Game) {
         }
     }
 
-    Box(Modifier.fillMaxSize().background(MaterialTheme.colorScheme.background).safeDrawingPadding()) {
+    // Letra grande: agranda todos los textos sobre el tamaño que ya tenga el celular
+    val density = LocalDensity.current
+    CompositionLocalProvider(LocalDensity provides Density(density.density, density.fontScale * if (game.bigText) 1.2f else 1f)) {
+    // Márgenes fijos de las barras de Android: así la pantalla no salta cuando se ocultan en el modo juego
+    Box(Modifier.fillMaxSize().background(MaterialTheme.colorScheme.background).windowInsetsPadding(StableInsets)) {
         AnimatedContent(
             targetState = s,
             transitionSpec = { fadeIn() togetherWith fadeOut() },
@@ -160,6 +182,7 @@ fun App(game: Game) {
                 is Screen.Result -> ResultScreen(game, screen)
             }
         }
+    }
     }
 
     if (askQuit) {
@@ -291,7 +314,7 @@ fun SetupScreen(game: Game) {
     val add = { if (game.addName(input)) input = "" }
 
     Column(Modifier.fillMaxSize()) {
-        LazyColumn(Modifier.weight(1f).fillMaxWidth(), contentPadding = PaddingValues(horizontal = 22.dp, vertical = 18.dp)) {
+        LazyColumn(Modifier.weight(1f).fillMaxWidth().testTag("setup-list"), contentPadding = PaddingValues(horizontal = 22.dp, vertical = 18.dp)) {
             item {
                 Row(verticalAlignment = Alignment.CenterVertically) {
                     Text("Nueva partida", fontSize = 30.sp, fontWeight = FontWeight.Bold, modifier = Modifier.weight(1f))
@@ -328,7 +351,7 @@ fun SetupScreen(game: Game) {
                     verticalAlignment = Alignment.CenterVertically,
                 ) {
                     Text("${i + 1}", color = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.width(26.dp))
-                    Text(n, fontSize = 17.sp, modifier = Modifier.weight(1f))
+                    Text(n, fontSize = 17.sp, modifier = Modifier.weight(1f), maxLines = 1, overflow = TextOverflow.Ellipsis)
                     TextButton(onClick = { game.moveName(i, i - 1) }, enabled = i > 0) { Text("▲") }
                     TextButton(onClick = { game.removeName(n) }) { Text("✕", color = UndercoverColor) }
                 }
@@ -390,6 +413,23 @@ fun SetupScreen(game: Game) {
                     }
                     Switch(checked = game.picante, onCheckedChange = { game.picante = it; game.saveConfig() })
                 }
+
+                SectionTitle("Pantalla")
+                Row(
+                    Modifier.fillMaxWidth().background(MaterialTheme.colorScheme.surface, RoundedCornerShape(14.dp))
+                        .padding(horizontal = 16.dp, vertical = 8.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    Column(Modifier.weight(1f)) {
+                        Text("Letra grande", fontSize = 16.sp)
+                        Muted("Textos más grandes en toda la app", Modifier.padding(top = 2.dp))
+                    }
+                    Switch(
+                        checked = game.bigText,
+                        onCheckedChange = { game.bigText = it; game.saveConfig() },
+                        modifier = Modifier.testTag("big-text"),
+                    )
+                }
             }
         }
         Column(Modifier.fillMaxWidth().padding(horizontal = 22.dp, vertical = 14.dp)) {
@@ -447,7 +487,7 @@ fun RevealScreen(game: Game, s: Screen.Reveal) {
         Spacer(Modifier.height(22.dp))
         // La palabra solo se ve mientras se mantiene presionado
         Box(
-            Modifier.fillMaxWidth().weight(1f)
+            Modifier.fillMaxWidth().weight(1f).testTag("reveal-box")
                 .background(MaterialTheme.colorScheme.surface, RoundedCornerShape(28.dp))
                 .pointerInput(s.index) {
                     detectTapGestures(onPress = {
@@ -516,6 +556,7 @@ fun DiscussScreen(game: Game) {
     }
 }
 
+@OptIn(ExperimentalLayoutApi::class)
 @Composable
 fun DiscussionTimer(game: Game) {
     val ctx = LocalContext.current
@@ -534,16 +575,18 @@ fun DiscussionTimer(game: Game) {
     }
     val left = if (end > 0) ((end - now + 999) / 1000).toInt().coerceAtLeast(0) else 0
     val running = end > 0
-    Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+    // En columna y con fila que se acomoda: no se desborda en pantallas pequeñas ni con letra grande
+    Column {
         Text(
             "%d:%02d".format(left / 60, left % 60), fontSize = 28.sp, fontWeight = FontWeight.Bold,
             color = if (running && left <= 10) UndercoverColor else MaterialTheme.colorScheme.onBackground,
-            modifier = Modifier.width(86.dp),
         )
-        listOf(60, 120, 180).forEach { secs ->
-            FilterChip(selected = false, onClick = { game.timerEnd = System.currentTimeMillis() + secs * 1000L }, label = { Text("${secs / 60} min") })
+        FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalArrangement = Arrangement.Center) {
+            listOf(60, 120, 180).forEach { secs ->
+                FilterChip(selected = false, onClick = { game.timerEnd = System.currentTimeMillis() + secs * 1000L }, label = { Text("${secs / 60} min") })
+            }
+            if (running) TextButton(onClick = { game.timerEnd = 0L }) { Text("Parar") }
         }
-        if (running) TextButton(onClick = { game.timerEnd = 0L }) { Text("Parar") }
     }
 }
 
@@ -676,7 +719,7 @@ fun ResultScreen(game: Game, s: Screen.Result) {
             Row(Modifier.fillMaxWidth().padding(vertical = 5.dp), verticalAlignment = Alignment.CenterVertically) {
                 Box(Modifier.size(10.dp).background(roleColor(p.role), CircleShape))
                 Spacer(Modifier.width(12.dp))
-                Text(p.name + if (!p.alive) " ✝" else "", fontSize = 17.sp, modifier = Modifier.weight(1f))
+                Text(p.name + if (!p.alive) " ✝" else "", fontSize = 17.sp, modifier = Modifier.weight(1f), maxLines = 1, overflow = TextOverflow.Ellipsis)
                 Text(p.role.label, color = roleColor(p.role), fontSize = 15.sp)
                 Text(if (pts > 0) "  +$pts" else "", fontWeight = FontWeight.Bold, color = Gold, modifier = Modifier.width(52.dp), textAlign = TextAlign.End)
             }
@@ -689,7 +732,7 @@ fun ResultScreen(game: Game, s: Screen.Result) {
         }
         game.scores.entries.filter { it.key in game.names }.sortedByDescending { it.value }.forEachIndexed { i, (n, v) ->
             Row(Modifier.fillMaxWidth().padding(vertical = 4.dp)) {
-                Text(if (i == 0 && v > 0) "👑 $n" else n, fontSize = 17.sp, modifier = Modifier.weight(1f))
+                Text(if (i == 0 && v > 0) "👑 $n" else n, fontSize = 17.sp, modifier = Modifier.weight(1f), maxLines = 1, overflow = TextOverflow.Ellipsis)
                 Text("$v", fontSize = 17.sp, fontWeight = FontWeight.Bold)
             }
         }

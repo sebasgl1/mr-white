@@ -50,6 +50,7 @@ class Game(context: Context) {
     var white by mutableIntStateOf(prefs.getInt("mw", 1))
     var modo by mutableStateOf(prefs.getString("modo", "Todo") ?: "Todo")
     var picante by mutableStateOf(prefs.getBoolean("picante", false))
+    var bigText by mutableStateOf(prefs.getBoolean("bigText", false))
 
     // Partida en curso
     val players = mutableStateListOf<Player>()
@@ -118,7 +119,7 @@ class Game(context: Context) {
         prefs.edit()
             .putString("players", names.joinToString("\n"))
             .putInt("uc", undercover).putInt("mw", white)
-            .putString("modo", modo).putBoolean("picante", picante)
+            .putString("modo", modo).putBoolean("picante", picante).putBoolean("bigText", bigText)
             .apply()
     }
 
