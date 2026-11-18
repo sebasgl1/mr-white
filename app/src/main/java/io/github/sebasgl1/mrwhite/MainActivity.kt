@@ -41,6 +41,8 @@ import androidx.compose.foundation.layout.systemBarsIgnoringVisibility
 import androidx.compose.foundation.layout.union
 import androidx.compose.foundation.layout.windowInsetsPadding
 import androidx.compose.runtime.CompositionLocalProvider
+import androidx.compose.runtime.DisposableEffect
+import androidx.compose.ui.platform.LocalSoftwareKeyboardController
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.style.TextOverflow
@@ -254,6 +256,13 @@ fun Muted(text: String, modifier: Modifier = Modifier, align: TextAlign = TextAl
 
 fun roleColor(r: Role) = when (r) { Role.CIVIL -> CivilColor; Role.UNDERCOVER -> UndercoverColor; Role.MR_WHITE -> WhiteColor }
 
+/** Al salir de una pantalla con campo de texto, cierra el teclado para que no aplaste la siguiente pantalla. */
+@Composable
+fun HideKeyboardOnExit() {
+    val kb = LocalSoftwareKeyboardController.current
+    DisposableEffect(Unit) { onDispose { kb?.hide() } }
+}
+
 // ---------- Inicio ----------
 
 @Composable
@@ -309,6 +318,7 @@ fun HowToScreen(game: Game) {
 
 @Composable
 fun SetupScreen(game: Game) {
+    HideKeyboardOnExit()
     var input by remember { mutableStateOf("") }
     val error = game.setupError()
     val add = { if (game.addName(input)) input = "" }
